@@ -1,0 +1,190 @@
+#cloud-config
+
+# ---------------------------------------------------------------------------
+# Cloud-init user data for an OrbStack (or any cloud-init-aware) Linux machine.
+#
+#   *** Change `chris` below to your macOS username if different. ***
+#   That's the only place — the wrapper script auto-detects whichever
+#   non-root user gets created.
+# ---------------------------------------------------------------------------
+
+# Create a single non-root user with the same name as your macOS account
+# (mirroring OrbStack's default behavior). Omitting `- default` means the
+# image's standard `ubuntu` user is NOT created.
+users:
+  - name: chris
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [sudo]
+    lock_passwd: true
+
+package_update: true
+
+packages:
+  - make
+  - build-essential
+  - podman
+  - podman-docker
+  - podman-compose
+  - gh
+  - unzip
+  - lsof
+  - curl
+  - git
+
+write_files:
+  # Wrapper that figures out which non-root user to run setup as.
+  # OrbStack creates a user with the same name as your macOS user; this picks
+  # the first regular user (UID >= 1000) so you don't have to hardcode it.
+  - path: /usr/local/sbin/dev-setup-wrapper.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/bin/bash
+      set -e
+      TARGET_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}' /etc/passwd)
+      if [ -z "$TARGET_USER" ]; then
+        echo "No non-system user found; running setup as root."
+        exec bash /usr/local/sbin/dev-setup.sh
+      fi
+      echo "Running setup as user: $TARGET_USER"
+
+      # If OrbStack's integration group exists, make sure our user is in it
+      # so that mac/macctl commands work correctly.
+      if getent group orbstack >/dev/null; then
+        usermod -aG orbstack "$TARGET_USER" || true
+      fi
+
+      exec sudo -u "$TARGET_USER" -H bash /usr/local/sbin/dev-setup.sh
+
+  # The actual setup script — your original logic, minus the apt install
+  # (handled declaratively above).
+  - path: /usr/local/sbin/dev-setup.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/bin/bash
+      # No `set -e` — we want one failing installer not to abort the rest.
+
+      # Helper: append a line to ~/.bashrc only if not already present
+      append_bashrc() {
+        grep -qxF "$1" ~/.bashrc || echo "$1" >> ~/.bashrc
+      }
+
+      # Helper: append a multi-line block to ~/.bashrc only if marker not present
+      append_bashrc_block() {
+        local marker="$1"
+        local content="$2"
+        grep -qxF "# >>> $marker >>>" ~/.bashrc || cat >> ~/.bashrc << EOF
+
+      # >>> $marker >>>
+      $content
+      # <<< $marker <
+      EOF
+      }
+
+      # Install bun
+      curl -fsSL https://bun.com/install | bash
+
+      # Install Rust (non-interactive, accept defaults)
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+      # Install starship prompt to ~/.local/bin so we don't need sudo
+      # (the default /usr/local/bin install fails inside cloud-init's
+      # nested sudo context with no TTY for password prompts).
+      mkdir -p "$HOME/.local/bin"
+      curl -sS https://starship.rs/install.sh | sh -s -- -b "$HOME/.local/bin" -y
+      append_bashrc 'export PATH="$HOME/.local/bin:$PATH"'
+      append_bashrc_block "starship" 'eval "$(starship init bash)"'
+
+      # Starship config: drop the container hexagon (the SSH globe already
+      # tells us this is a remote shell), and collapse the prompt to one line.
+      mkdir -p "$HOME/.config"
+      cat > "$HOME/.config/starship.toml" << 'TOML'
+      [container]
+      disabled = true
+
+      [line_break]
+      disabled = true
+      TOML
+
+      # Kill the process on a given port: bye <port>
+      append_bashrc_block "bye function" 'bye() {
+        local pid
+        pid=$(lsof -ti :"$1") || { echo "Nothing running on port $1"; return 1; }
+        kill "$pid" && echo "Killed process $pid on port $1"
+      }'
+
+      # Install Claude Code
+      curl -fsSL https://claude.ai/install.sh | bash
+      append_bashrc 'export PATH="$HOME/.local/bin:$PATH"'
+
+      # Configure Claude Code settings
+      mkdir -p ~/.claude
+      cat > ~/.claude/settings.json << 'JSON'
+      {
+        "$schema": "https://json.schemastore.org/claude-code-settings.json",
+        "permissions": {
+          "defaultMode": "bypassPermissions"
+        },
+        "skipDangerousModePermissionPrompt": true,
+        "includeCoAuthoredBy": false,
+        "attribution": {
+          "commit": "",
+          "pr": ""
+        }
+      }
+      JSON
+
+      # Install rtk and disable telemetry
+      curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
+      export PATH="$HOME/.local/bin:$PATH"  # so rtk is callable in this script
+      echo "n" | rtk init -g --auto-patch
+      append_bashrc 'export RTK_TELEMETRY_DISABLED=1'
+
+      # Generate GitHub SSH key (ed25519)
+      SSH_KEY="$HOME/.ssh/id_ed25519"
+      if [ ! -f "$SSH_KEY" ]; then
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        ssh-keygen -t ed25519 -C "$(whoami)@$(hostname)" -f "$SSH_KEY" -N ""
+      fi
+
+      # Trust github.com host key (avoids the "yes/no" prompt on first ssh)
+      if ! grep -q "^github.com " ~/.ssh/known_hosts 2>/dev/null; then
+        ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+      fi
+
+      # Configure git to sign commits with the SSH key
+      git config --global gpg.format ssh
+      git config --global user.signingkey "$SSH_KEY.pub"
+      git config --global commit.gpgsign true
+      git config --global tag.gpgsign true
+
+      # Set your git identity (email must match a verified GitHub email)
+      git config --global user.name "Chris Roth"
+      git config --global user.email "chris@cjroth.com"
+
+      # Tell SSH which keys count as trusted signers
+      mkdir -p ~/.config/git
+      echo "$(git config --global user.email) $(cat "$SSH_KEY.pub")" > ~/.config/git/allowed_signers
+      git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+
+      # NOTE: cloud-init has no way to inherit $GH_TOKEN from your shell,
+      # so this branch will normally fall through to the manual instructions.
+      # If you want automatic upload, hardcode the token here (NOT recommended
+      # for committed files) or run `gh auth login` interactively after boot.
+      if [ -n "$GH_TOKEN" ]; then
+        echo "$GH_TOKEN" | gh auth login --with-token
+        gh auth setup-git
+        gh ssh-key add "$SSH_KEY.pub" --title "lima-dev-$(hostname)-auth"
+        gh ssh-key add "$SSH_KEY.pub" --title "lima-dev-$(hostname)-signing" --type signing
+      else
+        echo
+        echo "GH_TOKEN not set — skipping gh auth and key upload."
+        echo "Add this key to https://github.com/settings/ssh/new (once as Authentication, once as Signing):"
+        cat "$SSH_KEY.pub"
+        echo
+      fi
+
+runcmd:
+  - /usr/local/sbin/dev-setup-wrapper.sh
