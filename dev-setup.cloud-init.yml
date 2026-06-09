@@ -31,6 +31,7 @@ packages:
   - lsof
   - curl
   - git
+  - socat
 
 write_files:
   # Wrapper that figures out which non-root user to run setup as.
@@ -186,5 +187,34 @@ write_files:
         echo
       fi
 
+      # Register the Firefox DevTools MCP server (user scope, all projects).
+      # It drives Firefox running on the Mac via the marionette-relay service
+      # below. Needs Node.js at runtime for `npx` (install your own toolchain).
+      if command -v claude >/dev/null 2>&1; then
+        claude mcp add firefox-devtools -s user -- \
+          npx -y @mozilla/firefox-devtools-mcp@latest --connectExisting --marionettePort 2828 || true
+      fi
+
+  # Marionette relay: bridges the VM's 127.0.0.1:2828 to the Mac's Firefox.
+  # OrbStack forwards the Mac's localhost as host.docker.internal, and the
+  # in-VM firefox-devtools MCP (geckodriver) only dials 127.0.0.1 — so socat
+  # relays between the two. See README.md for the Mac-side launcher.
+  - path: /etc/systemd/system/marionette-relay.service
+    permissions: '0644'
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Marionette relay (VM 127.0.0.1:2828 -> Mac Firefox) for Firefox DevTools MCP
+      After=network.target
+
+      [Service]
+      ExecStart=/usr/bin/socat TCP-LISTEN:2828,bind=127.0.0.1,reuseaddr,fork TCP:host.docker.internal:2828
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+
 runcmd:
   - /usr/local/sbin/dev-setup-wrapper.sh
+  - systemctl enable --now marionette-relay.service
