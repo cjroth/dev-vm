@@ -1,14 +1,16 @@
 # dev-vm
 
-My reproducible **OrbStack Linux dev machine**, provisioned from a single
-cloud-init file — plus a bridge that lets an MCP server **inside** the VM drive
-**Firefox running on the Mac**.
+My reproducible dev machines — an **OrbStack Linux** box provisioned from a
+single cloud-init file, and a **macOS (Tart) VM** provisioned from an equivalent
+shell script — plus a bridge that lets an MCP server **inside** the Linux VM
+drive **Firefox running on the Mac**.
 
 ## Contents
 
 | Path | Runs on | What it is |
 | --- | --- | --- |
-| `dev-setup.cloud-init.yml` | VM (at first boot) | cloud-config: user, packages, dev toolchain (bun, Rust, starship, Claude Code, rtk), git/SSH signing, and the Firefox→MCP relay service. |
+| `dev-setup.cloud-init.yml` | Linux VM (at first boot) | cloud-config: user, packages, dev toolchain (bun, Rust, starship, Claude Code, rtk), git/SSH signing, and the Firefox→MCP relay service. |
+| `mac/dev-setup.sh` | **macOS / Tart VM** | Provisioner for a Mac box — the macOS analog of the cloud-init. Same toolchain (bun, Node + Python via mise, Rust, starship, Claude Code, rtk) + SSH-signing git, via Homebrew. |
 | `mac/firefox-mcp.sh` | **Mac (host)** | Launches Firefox with Marionette so the in-VM MCP can attach. |
 
 ## Provision the VM
@@ -24,6 +26,36 @@ orbctl create ubuntu dev --user-data ./dev-setup.cloud-init.yml
 Change the `chris` username near the top of the YAML to your macOS account name
 if it differs. On first boot it installs the toolchain and, for the Firefox
 bridge, the `socat` package + a `marionette-relay` systemd service.
+
+## Provision a Mac VM (Tart)
+
+For a macOS box — a fresh [Tart](https://tart.run) VM, or any Mac —
+`mac/dev-setup.sh` installs the same toolchain as the Linux cloud-init using
+Homebrew + [mise](https://mise.jdx.dev). It assumes an admin user with sudo and
+Xcode Command Line Tools, both present on the cirruslabs `macos-*-base` images.
+
+```bash
+tart clone ghcr.io/cirruslabs/macos-sequoia-base:latest dev
+tart run dev &
+ssh admin@"$(tart ip dev)" \
+  'git clone git@github.com:cjroth/dev-vm.git && \
+   CLAUDE_CODE_OAUTH_TOKEN=<token> GH_TOKEN=<token> ./dev-vm/mac/dev-setup.sh'
+```
+
+Both tokens are optional:
+
+- **`CLAUDE_CODE_OAUTH_TOKEN`** logs Claude Code in without a browser. macOS keeps
+  the interactive `/login` in the machine-bound Keychain, so it can't be baked
+  into an image — generate a ~1-year token once on a machine with a browser
+  (`claude setup-token`) and pass it in. Omit it and Claude Code installs but
+  stays logged out (run `claude` then `/login` later).
+- **`GH_TOKEN`** uploads the generated SSH key to GitHub (once as Authentication,
+  once as Signing). Omit it and the script prints the public key for you to add
+  manually.
+
+> **Don't update macOS in-place inside the VM.** OTA update *personalization*
+> fails in virtualized macOS (the installer's hardware checks hit null values).
+> Bump the OS by cloning a newer `macos-*-base` image and re-running this script.
 
 ---
 
