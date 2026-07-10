@@ -56,6 +56,11 @@ append_zshrc "eval \"\$($BREW shellenv)\""
 say "Installing CLI tools via brew..."
 brew install git gh mise starship ripgrep fd jq fzf
 
+# GUI apps (casks): Zed Preview editor + Firefox Nightly (the browser the
+# firefox-mcp.sh bridge drives). Both auto-update themselves after install.
+say "Installing GUI apps via brew --cask..."
+brew install --cask zed@preview firefox@nightly
+
 # ---------------------------------------------------------------------------
 # mise — pinned, per-project-overridable Node + Python (+ more)
 # ---------------------------------------------------------------------------

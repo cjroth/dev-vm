@@ -56,8 +56,10 @@ bridge, the `socat` package + a `marionette-relay` systemd service.
 
 For a macOS box — a fresh [Tart](https://tart.run) VM, or any Mac —
 `mac/dev-setup.sh` installs the same toolchain as the Linux cloud-init using
-Homebrew + [mise](https://mise.jdx.dev). It assumes an admin user with sudo and
-Xcode Command Line Tools, both present on the cirruslabs `macos-*-base` images.
+Homebrew + [mise](https://mise.jdx.dev), plus two GUI apps via cask — **Zed
+Preview** (editor) and **Firefox Nightly** (the browser the DevTools MCP bridge
+below drives). It assumes an admin user with sudo and Xcode Command Line Tools,
+both present on the cirruslabs `macos-*-base` images.
 
 ```bash
 tart clone ghcr.io/cirruslabs/macos-sequoia-base:latest dev
