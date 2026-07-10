@@ -135,7 +135,9 @@ say "Installing Claude Code..."
 curl -fsSL https://claude.ai/install.sh | bash
 append_zshrc 'export PATH="$HOME/.local/bin:$PATH"'
 
-# Configure Claude Code settings
+# Configure Claude Code settings (mirrors the live ~/.claude/settings.json:
+# bypass permissions, no Claude attribution in commits, Opus 1M default,
+# fullscreen TUI, auto theme).
 mkdir -p ~/.claude
 cat > ~/.claude/settings.json << 'JSON'
 {
@@ -148,7 +150,10 @@ cat > ~/.claude/settings.json << 'JSON'
   "attribution": {
     "commit": "",
     "pr": ""
-  }
+  },
+  "model": "opus[1m]",
+  "tui": "fullscreen",
+  "theme": "auto"
 }
 JSON
 
@@ -218,5 +223,41 @@ else
   cat "$SSH_KEY.pub"
   echo
 fi
+
+# ---------------------------------------------------------------------------
+# Terminal.app — make Option+Enter insert a newline in the Claude Code TUI
+# ---------------------------------------------------------------------------
+# Mirrors Claude Code's `/terminal-setup`. Terminal.app can't tell Shift+Enter
+# apart from a plain Enter, so the supported trick is "Use Option as Meta key":
+# Option+Enter then sends the Meta+Enter sequence Claude Code reads as a newline.
+# Also switches the bell to visual. Self-skips on hosts without Terminal.app
+# (e.g. a headless VM) — there, run `/terminal-setup` inside Claude Code, and on
+# iTerm2 / the VS Code terminal use that same command to bind Shift+Enter.
+# PlistBuddy can't address the space in the "Window Settings" key, so edit the
+# plist with python3 (ships with the Command Line Tools this script requires).
+configure_terminal() {
+  local plist="$HOME/Library/Preferences/com.apple.Terminal.plist"
+  [ -f "$plist" ] || { warn "Terminal.app prefs not found — skipping newline config (run /terminal-setup in Claude Code)."; return 0; }
+  say "Configuring Terminal.app (Option=Meta so Option+Enter = newline, visual bell)..."
+  /usr/bin/python3 - "$plist" <<'PY' || { warn "Terminal config skipped (plist edit failed)."; return 0; }
+import sys, plistlib
+path = sys.argv[1]
+with open(path, 'rb') as f:
+    d = plistlib.load(f)
+profile = d.get('Default Window Settings', 'Basic')
+prof = d.get('Window Settings', {}).get(profile)
+if prof is None:
+    print(f"  profile {profile!r} not found; skipping"); sys.exit(0)
+prof['useOptionAsMetaKey'] = True   # Option+Enter -> newline
+prof['Bell'] = False                # audible bell off
+prof['VisualBell'] = True           # visual bell on
+with open(path, 'wb') as f:
+    plistlib.dump(d, f)
+print(f"  configured profile {profile!r}")
+PY
+  killall cfprefsd 2>/dev/null || true
+  warn "Restart Terminal.app for the newline binding to take effect (Option+Enter = newline)."
+}
+configure_terminal
 
 say "Done. Open a new shell (or 'exec zsh') to pick up PATH, mise, starship, and the prompt."

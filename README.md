@@ -9,9 +9,34 @@ drive **Firefox running on the Mac**.
 
 | Path | Runs on | What it is |
 | --- | --- | --- |
+| `bootstrap.sh` | **any fresh Mac** | One-command entry point: ensures git (Xcode CLT), clones this (private) repo with a token, then runs `mac/dev-setup.sh`. |
 | `dev-setup.cloud-init.yml` | Linux VM (at first boot) | cloud-config: user, packages, dev toolchain (bun, Rust, starship, Claude Code, rtk), git/SSH signing, and the Firefox→MCP relay service. |
-| `mac/dev-setup.sh` | **macOS / Tart VM** | Provisioner for a Mac box — the macOS analog of the cloud-init. Same toolchain (bun, Node + Python via mise, Rust, starship, Claude Code, rtk) + SSH-signing git, via Homebrew. |
+| `mac/dev-setup.sh` | **macOS / Tart VM** | Provisioner for a Mac box — the macOS analog of the cloud-init. Same toolchain (bun, Node + Python via mise, Rust, starship, Claude Code, rtk) + SSH-signing git + Terminal.app newline binding, via Homebrew. |
 | `mac/firefox-mcp.sh` | **Mac (host)** | Launches Firefox with Marionette so the in-VM MCP can attach. |
+
+## Fresh Mac — one command
+
+On a brand-new Mac (or a fresh Tart VM), paste a single command in **Terminal.app**.
+Because this repo is **private**, `GH_TOKEN` is required just to fetch and clone
+it — it's used only for the clone, then the remote is reset to SSH.
+
+```bash
+export GH_TOKEN=ghp_xxx                       # repo read + admin:public_key
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat...  # optional; `claude setup-token`
+curl -fsSL -H "Authorization: token $GH_TOKEN" \
+  https://raw.githubusercontent.com/cjroth/dev-vm/main/bootstrap.sh \
+  | GH_TOKEN="$GH_TOKEN" CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" bash
+```
+
+This installs the full toolchain, writes `~/.claude/settings.json` (bypass
+permissions, no Claude attribution, Opus 1M default), sets up SSH-signing git as
+`Chris Roth <chris@cjroth.com>`, and configures Terminal.app so **Option+Enter
+inserts a newline** in the Claude Code TUI (Terminal.app can't bind Shift+Enter;
+on iTerm2 / VS Code run `/terminal-setup` inside Claude Code for Shift+Enter).
+Restart Terminal.app afterward and `exec zsh`.
+
+> On a truly fresh Mac the first run may stop to install Xcode Command Line
+> Tools via a GUI dialog — accept it, then re-run the same command.
 
 ## Provision the VM
 
